@@ -245,6 +245,9 @@ namespace SaccFlightAndVehicles
 
             if (DoAnimBool && !AnimOn)
             { SendCustomNetworkEvent(VRC.Udon.Common.Interfaces.NetworkEventTarget.All, nameof(SetBoolOn)); }
+
+            if (HMCSMissileLockReticle) { HMCSMissileLockReticle.SetActive(true); }
+            if (TargetDirectionArrow) { TargetDirectionArrow.SetActive(true); }
         }
         public void DFUNC_Deselected()
         {
@@ -265,6 +268,9 @@ namespace SaccFlightAndVehicles
 
             if (DoAnimBool && AnimOn)
             { SendCustomNetworkEvent(VRC.Udon.Common.Interfaces.NetworkEventTarget.All, nameof(SetBoolOff)); }
+
+            if (HMCSMissileLockReticle) { HMCSMissileLockReticle.SetActive(false); }
+            if (TargetDirectionArrow) { TargetDirectionArrow.SetActive(false); }
         }
         void Update()
         {
@@ -355,14 +361,20 @@ namespace SaccFlightAndVehicles
         private float AAMTargetObscuredDelay;
         //HMCS
         [Tooltip("Linking an HMCSController will allow players to look at the target they would like to lock.")]
-        public Transform LinkedHMCSController;
+        public UdonSharpBehaviour LinkedHMCSController;
         [Tooltip("This is how far back you can look before it reaches the edge of the missile FOV and caps. Just like in DCS.")]
         public float MaxHMCSLookAngle = 90;
         public GameObject HMCSMissileLockReticle;
         //public GameObject HMCSCrosshair;
         [HideInInspector] public Vector3 ClampedLookAngle;
         public float HMCSSmoothing = 0.15f;
-        private Vector3 Smoothlook = Vector3.zero;
+        public bool DoReticleLock = false;
+        private bool HMDHidden = true;
+        public bool Arrow3d = false;
+        public float ArrowMinAngle = 5;
+        public float ArrowMaxAngle = 30;
+        public GameObject TargetDirectionArrow;
+        //private Vector3 Smoothlook = Vector3.zero;
         //public Transform TARGETDEBUG;
         /* everywhere that GetComponent<SaccAirVehicle>() is used should be changed to UdonSharpBehaviour for modularity's sake,
         but it seems that it's impossible until further udon/sharp updates, because it currently doesn't support checking if a variable exists before trying to get it */
@@ -370,33 +382,46 @@ namespace SaccFlightAndVehicles
         {
             if (func_active)
             {
+                //HMCS TargetDirectionArrow
+                if (TargetDirectionArrow)
+                {
+
+                    if (Arrow3d) TargetDirectionArrow.transform.rotation = Quaternion.LookRotation(AAMCurrentTargetDirection, Vector3.up);
+                    else
+                    {
+                        TargetDirectionArrow.transform.rotation = Quaternion.LookRotation(Vector3.ProjectOnPlane(AAMCurrentTargetDirection, (localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position - TargetDirectionArrow.transform.position).normalized), LinkedHMCSController ? LinkedHMCSController.transform.up : VehicleTransform.up);
+                    }
+                    TargetDirectionArrow.transform.localScale = new Vector3(1, 1, Mathf.Clamp(Vector3.Angle((TargetDirectionArrow.transform.position - localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position).normalized, AAMCurrentTargetDirection) - ArrowMinAngle, 0, ArrowMaxAngle - ArrowMinAngle) / (ArrowMaxAngle - ArrowMinAngle));
+                }
                 if (HMCSMissileLockReticle) { HMCSMissileLockReticle.SetActive(true); } //HMCS AAM targeting circle
                 //if (HMCSCrosshair) { HMCSCrosshair.SetActive(false); } //Turns off the normal HMCS crosshair, this script does not turn it on again though so if there is nothing else turning it on it will remain off lol.
                 //TARGETDEBUG.position = AAMTargets[AAMTarget].transform.position;
                 float DeltaTime = Time.fixedDeltaTime;
                 var AAMCurrentTargetPosition = AAMTargets[AAMTarget].transform.position;
                 Vector3 HudControlPosition = HUDControl ? HUDControl.transform.position : localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position;
+                //For locking the angle to forward when hmcs is deactivated.
+                if (LinkedHMCSController) { HMDHidden = (bool)LinkedHMCSController.GetProgramVariable("HMDHidden"); }
                 //HMCS clamping pain in the ass
-                if (LinkedHMCSController) { ClampedLookAngle = LinkedHMCSController.forward; }
+                if (LinkedHMCSController) { ClampedLookAngle = LinkedHMCSController.transform.forward; }
                 if (LinkedHMCSController)
                 {
                     Quaternion rotatebackby;
-                    float angle = Vector3.Angle(LinkedHMCSController.forward, VehicleTransform.forward);
+                    float angle = Vector3.Angle(LinkedHMCSController.transform.forward, VehicleTransform.forward);
                     if (angle > MaxHMCSLookAngle)
                     {
-                        rotatebackby = Quaternion.AngleAxis(angle - MaxHMCSLookAngle, Vector3.Cross(LinkedHMCSController.forward, VehicleTransform.forward));
-                        ClampedLookAngle = rotatebackby * LinkedHMCSController.forward;
+                        rotatebackby = Quaternion.AngleAxis(angle - MaxHMCSLookAngle, Vector3.Cross(LinkedHMCSController.transform.forward, VehicleTransform.forward));
+                        ClampedLookAngle = rotatebackby * LinkedHMCSController.transform.forward;
                     }
                 }
-                Smoothlook = Vector3.Slerp(Smoothlook, ClampedLookAngle, HMCSSmoothing);
-                float AAMCurrentTargetAngle = Vector3.Angle(LinkedHMCSController ? Smoothlook: VehicleTransform.forward, (AAMCurrentTargetPosition - HudControlPosition));
+                //Smoothlook = Vector3.Slerp(Smoothlook, ClampedLookAngle, HMCSSmoothing);
+                float AAMCurrentTargetAngle = Vector3.Angle(LinkedHMCSController && HMCSMissileLockReticle && HMDHidden || !DoReticleLock && LinkedHMCSController && HMCSMissileLockReticle ? ClampedLookAngle : VehicleTransform.forward, (AAMCurrentTargetPosition - HudControlPosition));
                 //check 1 target per frame to see if it's infront of us and worthy of being our current target
                 var TargetChecker = AAMTargets[AAMTargetChecker];
                 var TargetCheckerTransform = TargetChecker.transform;
                 var TargetCheckerParent = TargetCheckerTransform.parent;
 
                 Vector3 AAMNextTargetDirection = (TargetCheckerTransform.position - HudControlPosition);
-                float NextTargetAngle = Vector3.Angle(LinkedHMCSController ? Smoothlook : VehicleTransform.forward, AAMNextTargetDirection);
+                float NextTargetAngle = Vector3.Angle(LinkedHMCSController && HMCSMissileLockReticle && HMDHidden || !DoReticleLock && LinkedHMCSController && HMCSMissileLockReticle ? ClampedLookAngle : VehicleTransform.forward, AAMNextTargetDirection);
                 float NextTargetDistance = Vector3.Distance(CenterOfMass.position, TargetCheckerTransform.position);
 
                 if (TargetChecker.activeInHierarchy)
@@ -480,7 +505,7 @@ namespace SaccFlightAndVehicles
                                     (!AAMCurrentTargetSAVControl.Taxiing && !AAMCurrentTargetSAVControl.EntityControl._dead &&
                                         (MissileType != 0 || AAMCurrentTargetSAVControl._EngineOn)))//heatseekers cant lock if engine off
                                     &&
-                                        (!HighAspectPreventLock || !AAMCurrentTargetSAVControl || Vector3.Dot(LinkedHMCSController ? LinkedHMCSController.forward : AAMCurrentTargetSAVControl.VehicleTransform.forward, AAMCurrentTargetDirection.normalized) > HighAspectPreventLockAngleDot)
+                                        (!HighAspectPreventLock || !AAMCurrentTargetSAVControl || Vector3.Dot(LinkedHMCSController ? LinkedHMCSController.transform.forward : AAMCurrentTargetSAVControl.VehicleTransform.forward, AAMCurrentTargetDirection.normalized) > HighAspectPreventLockAngleDot)
                                         )
                 {
                     if ((AAMTargetObscuredDelay < .25f) && AAMCurrentTargetDistance < AAMMaxTargetDistance)
@@ -526,26 +551,47 @@ namespace SaccFlightAndVehicles
                                 Debug.Log(string.Concat("NotObscured ", AAMTargetObscuredDelay < .25f));
                                 Debug.Log(string.Concat("InAngle ", AAMCurrentTargetAngle < AAMLockAngle));
                                 Debug.Log(string.Concat("BelowMaxDist ", AAMCurrentTargetDistance < AAMMaxTargetDistance)); */
-            } else if (HMCSMissileLockReticle) { HMCSMissileLockReticle.SetActive(false); }
+            }
+            else if (HMCSMissileLockReticle) { HMCSMissileLockReticle.SetActive(false); }
         }
+        [Header("AAM HMD Reticle settings")]
         private Vector3 ReticleSmoothDirection = Vector3.zero;
+        private Vector3 LockedSmoothDirection = Vector3.zero;
+        private float t = 0; //This makes the HUD circle gravitate toward targets.
+        private float r = 0; //This makes it so the circle actually sticks on the target and doesn't lag behind whenever AAM is locked.
+        [Tooltip("How fast the circle moves to the target after AAM has established a lock.")]
+        public float LockSmoothing = 5;
+        public float ReturnSmoothing = 0.01f;
         private void LateUpdate()
         {
             //HMCS circle reticle
             if (HMCSMissileLockReticle)
             {
-                float t = 0;
                 if (AAMLocked)
                 {
-                    t = 0;
+                    t = Mathf.Clamp(t - Time.deltaTime * ReturnSmoothing, 0, 1);
+                    //ReticleSmoothDirection = Vector3.Slerp(ReticleSmoothDirection, Vector3.Lerp(AAMCurrentTargetDirection.normalized, ClampedLookAngle.normalized, t), HMCSSmoothing);
+                    r = Mathf.Clamp(r + (Time.deltaTime * ReturnSmoothing), 0, 1);
                 }
                 else
                 {
-                    if (AAMCurrentTargetDirection.magnitude < AAMMaxTargetDistance && (NumAAM > 0 || AllowNoAmmoLock)) { t = Mathf.Clamp(Vector3.Angle(AAMCurrentTargetDirection, Smoothlook), 0, AAMLockAngle) / AAMLockAngle; } else { t = 1; }
+                    r = Mathf.Clamp(r - (Time.deltaTime * LockSmoothing), 0, 1);
+                    if (Vector3.Angle(AAMCurrentTargetDirection, ClampedLookAngle.normalized) < AAMLockAngle && AAMCurrentTargetDirection.magnitude < AAMMaxTargetDistance && (NumAAM > 0 || AllowNoAmmoLock) && (!(bool)SAVControl.GetProgramVariable("Taxiing") || AllowFiringWhenGrounded) && (AAMTargetObscuredDelay < .25f) && AAMTargets[AAMTarget].activeInHierarchy && (!AAMCurrentTargetSAVControl || (!AAMCurrentTargetSAVControl.Taxiing && !AAMCurrentTargetSAVControl.EntityControl._dead && (MissileType != 0 || AAMCurrentTargetSAVControl._EngineOn) && (!HighAspectPreventLock || !AAMCurrentTargetSAVControl || Vector3.Dot(LinkedHMCSController ? LinkedHMCSController.transform.forward : AAMCurrentTargetSAVControl.VehicleTransform.forward, AAMCurrentTargetDirection.normalized) > HighAspectPreventLockAngleDot))))
+                    {
+                        t = Mathf.Clamp(Vector3.Angle(AAMCurrentTargetDirection, ClampedLookAngle), 0, AAMLockAngle) / AAMLockAngle;
+                    }
+                    else
+                    {
+                        t = Mathf.Clamp(t + Time.deltaTime * LockSmoothing, 0, 1);
+                    }
+                    //ReticleSmoothDirection = Vector3.Slerp(ReticleSmoothDirection, Vector3.Lerp(AAMCurrentTargetDirection.normalized, HMDHidden || !DoReticleLock ? ClampedLookAngle.normalized : VehicleTransform.forward, t), HMCSSmoothing);
+                    //HMCSMissileLockReticle.transform.position = localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position + ReticleSmoothDirection;
                 }
-                ReticleSmoothDirection = Vector3.Slerp(ReticleSmoothDirection, Vector3.Lerp(AAMCurrentTargetDirection.normalized, ClampedLookAngle.normalized, t), HMCSSmoothing);
-                HMCSMissileLockReticle.transform.position = localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position + ReticleSmoothDirection;
-                HMCSMissileLockReticle.transform.localPosition = HMCSMissileLockReticle.transform.localPosition.normalized * distance_from_head;
+                ReticleSmoothDirection = Vector3.Slerp(ReticleSmoothDirection, Vector3.Lerp(AAMCurrentTargetDirection.normalized, HMDHidden || !DoReticleLock ? ClampedLookAngle.normalized : VehicleTransform.forward, t), HMCSSmoothing);
+                LockedSmoothDirection = Vector3.Lerp(ReticleSmoothDirection, AAMCurrentTargetDirection, r);
+                HMCSMissileLockReticle.transform.position = localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position + LockedSmoothDirection;
+                HMCSMissileLockReticle.transform.localPosition = HMCSMissileLockReticle.transform.localPosition.normalized * distance_from_head * 740;
+                HMCSMissileLockReticle.transform.rotation = Quaternion.LookRotation(localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position - HMCSMissileLockReticle.transform.position).normalized;
             }
             /////////////////////
         }
@@ -567,11 +613,11 @@ namespace SaccFlightAndVehicles
                     AAMTargetIndicator.localPosition = AAMTargetIndicator.localPosition.normalized * distance_from_head;
                     if (AAMLocked)
                     {
-                        AAMTargetIndicator.rotation = Quaternion.LookRotation(gameObject.transform.position - AAMTargetIndicator.position, LinkedHMCSController ? LinkedHMCSController.up : gameObject.transform.up); //back of mesh is locked version so direction is reversed
+                        AAMTargetIndicator.rotation = Quaternion.LookRotation(gameObject.transform.position - AAMTargetIndicator.position, LinkedHMCSController ? LinkedHMCSController.transform.up : gameObject.transform.up); //back of mesh is locked version so direction is reversed
                     }
                     else
                     {
-                        AAMTargetIndicator.rotation = Quaternion.LookRotation(AAMTargetIndicator.position - gameObject.transform.position, LinkedHMCSController ? LinkedHMCSController.up : gameObject.transform.up);
+                        AAMTargetIndicator.rotation = Quaternion.LookRotation(AAMTargetIndicator.position - gameObject.transform.position, LinkedHMCSController ? LinkedHMCSController.transform.up : gameObject.transform.up);
                     }
                 }
                 else AAMTargetIndicator.localScale = Vector3.zero;
