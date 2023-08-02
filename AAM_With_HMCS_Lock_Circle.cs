@@ -718,7 +718,7 @@ namespace SaccFlightAndVehicles
         private float r = 0; //This makes it so the circle actually sticks on the target and doesn't lag behind whenever AAM is locked.
 
 
-        private void LateUpdate()
+        public override void PostLateUpdate()
         {
             if (!HMCSMissileLockReticle) return;
 
